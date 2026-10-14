@@ -1,0 +1,7 @@
+numpy>=1.23
+scipy>=1.10
+scikit-learn>=1.2
+torch>=2.1
+torchvision>=0.16
+Pillow>=9.5
+tqdm>=4.65

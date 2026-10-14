@@ -1,0 +1,18 @@
+int_step,str_step
+-1,operation_ended
+-1,operation_not_started
+-1,out_of_patient
+1,nasal corridor creation 
+2,anterior sphenoidotomy
+3,septum displacement
+4,sphenoid sinus clearance
+5,sellotomy
+6,durotomy
+7,tumour excision
+8,haemostasis
+9,synthetic_graft_placement
+10,fat graft placement
+11,gasket seal construct
+12,dural sealant
+13,nasal packing
+14,debris clearance

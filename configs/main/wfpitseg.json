@@ -1,0 +1,101 @@
+{
+  "architecture": "mstcn",
+  "input_mode": "features",
+  "stage_a_epochs": 0,
+  "stage_b_epochs": 50,
+  "batch_size": 1,
+  "lr": 0.0005,
+  "weight_decay": 1e-05,
+  "warmup_ratio": 0.05,
+  "mstcn_channels": 128,
+  "mstcn_layers": 10,
+  "mstcn_stages": 4,
+  "dropout": 0.5,
+  "input_dropout": 0.3,
+  "instrument_fusion": false,
+  "grad_accum_steps": 1,
+  "lambda_bd": 0.25,
+  "lambda_inst": 0.1,
+  "lambda_tmse": 0.15,
+  "lambda_trans": 0.0,
+  "label_smoothing": 0.0,
+  "focal_gamma": 0.0,
+  "use_instrument_pos_weight": true,
+  "boundary_mode": "pairwise",
+  "boundary_radius": 3,
+  "boundary_base_weight": 2.0,
+  "focus_boundary_weight": 3.0,
+  "boundary_kernel": "pairwise_asymmetric_gaussian",
+  "boundary_left_sigma": 3.0,
+  "boundary_right_sigma": 12.0,
+  "transition_pairs": [
+    [
+      2,
+      3
+    ],
+    [
+      3,
+      2
+    ],
+    [
+      3,
+      4
+    ],
+    [
+      4,
+      3
+    ],
+    [
+      8,
+      9
+    ],
+    [
+      9,
+      8
+    ],
+    [
+      9,
+      10
+    ],
+    [
+      10,
+      9
+    ],
+    [
+      10,
+      12
+    ],
+    [
+      12,
+      10
+    ],
+    [
+      12,
+      14
+    ],
+    [
+      14,
+      12
+    ]
+  ],
+  "seed": 42,
+  "device": "cuda",
+  "gpu_mem_limit": 0.9,
+  "ram_limit": 0.8,
+  "num_workers": 0,
+  "pin_memory": false,
+  "prefetch_factor": 2,
+  "progress_bar": true,
+  "log_interval": 5,
+  "amp": true,
+  "amp_dtype": "bf16",
+  "channels_last": false,
+  "early_stopping_patience": 15,
+  "early_stopping_metric": "viterbi_step_metric",
+  "light_post_kernel_size": 11,
+  "min_duration_frames": 30,
+  "position_prior_bins": 8,
+  "position_prior_weight": 0.0,
+  "prior_position_prior_weight": 0.3,
+  "late_chain_refine": false
+}
