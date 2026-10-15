@@ -1,142 +1,164 @@
+<div align="center">
+
 # WF-PitSeg
 
-**Workflow-aware Surgical Step Segmentation**
+### Workflow-aware Surgical Step Segmentation
 
-面向垂体内镜手术视频的离线步骤分割。项目结合 **LemonFM / ConvNeXt-Large 视觉表征、全视频 MS-TCN、成对非对称边界监督和工作流约束 Viterbi 解码**，将逐帧预测转化为连续的手术步骤时间轴。
+From endoscopic video frames to coherent surgical step timelines.
 
-`PyTorch` · `Computer Vision` · `Video Understanding` · `Temporal Segmentation`
+**LemonFM · Temporal Modeling · Boundary Supervision · Workflow Decoding**
 
-## 项目概览
+[Method](#method) · [Results](#results) · [Visual Results](#visual-results) · [Quick Start](#quick-start) · [Code](#code)
 
-手术步骤识别既需要区分相似的视觉场景，也需要处理长视频中的步骤切换与预测碎片。WF-PitSeg 使用任务适配后的视觉特征建模整段视频，并将手术流程中的合法转移关系引入序列解码。
+</div>
 
-- **视觉适配**：以 LemonFM 初始化 ConvNeXt-Large，微调最后一个特征阶段，提取每帧 1536 维表示。
-- **长序列建模**：四阶段 MS-TCN，每阶段 10 个膨胀残差层、128 个隐藏通道，逐阶段细化步骤预测。
-- **多任务训练**：步骤分类、TMSE 时序平滑、器械辅助监督与 12 个有向转移通道的边界监督；非对称高斯边界的左右尺度为 3 / 12 帧。
-- **结构化解码**：利用工作流转移图执行 Viterbi 解码，减少零碎片段与不合理的步骤跳转。
+---
 
-```mermaid
-flowchart LR
-    A["视频帧 · 1 FPS"] --> B["LemonFM / ConvNeXt-Large<br/>任务适配"]
-    B --> C["逐帧特征<br/>T × 1536"]
-    C --> D["全视频 MS-TCN<br/>4 阶段 × 10 层"]
-    D --> E["工作流约束<br/>Viterbi 解码"]
-    E --> F["步骤时间轴"]
-    C -.-> G["器械辅助监督"]
-    D -.-> H["成对边界监督"]
-```
+WF-PitSeg is an **offline video understanding pipeline for endoscopic pituitary surgery**. It combines a task-adapted surgical vision encoder with full-video temporal modeling and workflow-constrained decoding to recognize surgical steps and reduce fragmented predictions.
 
-虚线表示训练阶段的辅助分支。默认配置采用器械辅助监督，边界预测不直接输入 Viterbi；主流程使用单个时序 checkpoint。
+| **0.6629 StepMetric** | **+10.50 pp Edit** | **12 surgical steps** |
+|:---:|:---:|:---:|
+| Default Viterbi decoding | Improvement over raw predictions | PitVis videos sampled at 1 FPS |
 
-## 主要结果
+<p align="center">
+  <a href="assets/framework.png"><img src="assets/framework.png" alt="WF-PitSeg framework: LemonFM visual adaptation, full-video MS-TCN with auxiliary supervision, and workflow-constrained Viterbi decoding" width="100%"></a>
+  <br>
+  <sub>Method overview from the manuscript. Dashed branches provide training-only supervision.</sub>
+</p>
 
-以下汇总论文与已完成实验中的代表性结果。`StepMetric = (Macro-F1 + Edit) / 2`，表中指标越高越好。
+## Method
 
-### PitVis：固定验证集
+1. **Adapt surgical visual features.** Fine-tune the last feature stage of a LemonFM-initialized ConvNeXt-Large and extract a 1,536-dimensional representation per frame.
+2. **Model the complete procedure.** Refine frame predictions with a four-stage MS-TCN, using 10 dilated residual layers and 128 hidden channels per stage.
+3. **Learn transitions and auxiliary cues.** Combine step classification, temporal smoothing, instrument supervision, and 12 directional boundary targets with asymmetric Gaussian widths of 3 / 12 frames.
+4. **Decode a coherent workflow.** Apply Viterbi decoding with surgical transition constraints to convert frame probabilities into a step sequence.
 
-使用 25 段公开视频中的 20 段训练、5 段验证；验证视频为 `01 / 12 / 21 / 24 / 25`。视频以 **1 FPS** 采样，任务包含 **12 个有效步骤类别**。这些结果对应公开验证集。
+The default model uses auxiliary instrument supervision and a single temporal checkpoint. Boundary predictions support training and are not direct inputs to the decoder.
 
-| 解码方式 | StepMetric ↑ | Macro-F1 ↑ | Edit ↑ |
-|---|---:|---:|---:|
+## Results
+
+**PitVis public validation split:** 25 videos, with 20 for training and 5 for validation (`01 / 12 / 21 / 24 / 25`). All metrics below are higher-is-better; **StepMetric = (Macro-F1 + Edit) / 2**.
+
+| Decoding | StepMetric ↑ | Macro-F1 ↑ | Edit ↑ |
+|:---|---:|---:|---:|
 | Raw argmax | 0.6046 | 0.6051 | 0.6042 |
 | Light smoothing | 0.6405 | 0.6050 | 0.6761 |
 | **Default Viterbi** | **0.6629** | **0.6166** | **0.7092** |
-| Prior-calibrated Viterbi¹ | 0.6891 | 0.6305 | 0.7477 |
+| Prior-calibrated Viterbi* | 0.6891 | 0.6305 | 0.7477 |
 
-**Default Viterbi 相比 Raw argmax：StepMetric 提升 5.83 个百分点，Edit 提升 10.50 个百分点。**
+Default Viterbi improves **StepMetric by 5.83 percentage points** and **Edit by 10.50 percentage points** over raw predictions from the same checkpoint.
 
-¹ Prior-calibrated 使用当前验证集搜索发射概率先验，作为验证集调参结果单独列出；Default Viterbi 使用固定解码设置。
+<sub>*Prior-calibrated results use emission priors tuned on this validation split and are reported as development results. Default Viterbi uses fixed decoding settings. These are public validation results.</sub>
 
-### 五折视频级解码评估
+## Visual Results
 
-| 解码方式 | StepMetric（均值 ± 标准差）↑ | Macro-F1 ↑ | Edit ↑ |
-|---|---:|---:|---:|
+### Following the surgical timeline
+
+<p align="center">
+  <a href="assets/qualitative_alignment.png"><img src="assets/qualitative_alignment.png" alt="Ground-truth and predicted surgical step sequences, with residual temporal errors shown in red" width="900"></a>
+  <br>
+  <sub>A validation case under prior-calibrated decoding. Blue: ground truth. Orange: prediction. Red: temporal errors.</sub>
+</p>
+
+### Understanding the remaining errors
+
+<p align="center">
+  <a href="assets/confusion_matrix.png"><img src="assets/confusion_matrix.png" alt="Row-normalized confusion matrix for 12 surgical step classes under default Viterbi decoding" width="640"></a>
+  <br>
+  <sub>Default Viterbi on the fixed validation split. Rows: ground truth; columns: predictions; values: percentages.</sub>
+</p>
+
+The confusion matrix highlights the difficulty of distinguishing neighboring steps. Reporting both Macro-F1 and Edit captures frame classification quality and sequence consistency.
+
+## Additional Experiments
+
+<details>
+<summary><strong>Five-fold video-level decoding evaluation</strong></summary>
+
+| Decoding | StepMetric (mean ± std) ↑ | Macro-F1 ↑ | Edit ↑ |
+|:---|---:|---:|---:|
 | Raw argmax | 0.6368 ± 0.0610 | 0.6784 | 0.5952 |
 | Standard Viterbi | 0.6665 ± 0.0639 | 0.6776 | 0.6555 |
 | Workflow Viterbi | 0.6683 ± 0.0631 | 0.6785 | 0.6582 |
 | Workflow Viterbi + fixed prior | **0.6770 ± 0.0477** | **0.6818** | **0.6723** |
 
-标准差表示五个视频划分之间的差异。转移统计由每折训练视频估计，评估时不执行逐折先验搜索；最后一行使用历史开发阶段锁定的先验，不属于嵌套交叉验证的先验选择。
+Standard deviations are across five video splits. Transition statistics are estimated from each training fold. The final row uses a prior locked during earlier development, with no per-fold prior search; prior selection is not nested cross-validation.
 
-### 解码效果对比
-
-```mermaid
-xychart-beta
-    title "Edit on the PitVis public validation split"
-    x-axis ["Raw argmax", "Light smoothing", "Default Viterbi"]
-    y-axis "Edit" 0 --> 1
-    bar [0.6042, 0.6761, 0.7092]
-```
-
-上图使用固定验证集的汇总指标，比较同一 checkpoint 在三种固定解码设置下的表现。工作流约束对 Edit 的改善更明显，说明其主要收益在于步骤序列的连续性。
+</details>
 
 <details>
-<summary><strong>视觉表征与时序模型对照</strong></summary>
+<summary><strong>Visual adaptation and temporal model comparisons</strong></summary>
 
-**视觉初始化与任务适配。** 同一固定验证集、相同的先验校准评估流程：
+**Visual adaptation.** Fixed validation split with the same prior-calibrated evaluation procedure:
 
-| 视觉表征 | StepMetric ↑ | Macro-F1 ↑ |
-|---|---:|---:|
-| ImageNet 初始化 + 微调 | 0.6433 | 0.5872 |
-| 冻结 LemonFM | 0.6424 | 0.5774 |
-| LemonFM + 任务微调 | **0.6891** | **0.6305** |
+| Visual representation | StepMetric ↑ | Macro-F1 ↑ |
+|:---|---:|---:|
+| ImageNet initialization + fine-tuning | 0.6433 | 0.5872 |
+| Frozen LemonFM | 0.6424 | 0.5774 |
+| **LemonFM + task adaptation** | **0.6891** | **0.6305** |
 
-**时序模型对照。** 固定划分、seed 42、相同视觉特征；以下均为 StepMetric：
+**Temporal models.** Same visual features, fixed split, seed 42. Scores are StepMetric:
 
-| 模型 | 时序参数量 | Raw ↑ | Standard Viterbi ↑ | Workflow Viterbi ↑ | Workflow + fixed prior ↑ |
-|---|---:|---:|---:|---:|---:|
+| Model | Temporal params | Raw ↑ | Standard Viterbi ↑ | Workflow Viterbi ↑ | Workflow + fixed prior ↑ |
+|:---|---:|---:|---:|---:|---:|
 | Framewise | 0.414 M | 0.2455 | 0.3866 | 0.3839 | 0.3756 |
 | Vanilla MS-TCN | 3.055 M | **0.5700** | 0.6056 | 0.6038 | 0.6224 |
 | MS-TCN++ | 3.712 M | 0.5655 | **0.6349** | 0.6213 | **0.6370** |
 | WF-PitSeg–Fusion | 3.073 M | 0.5348 | 0.6272 | **0.6258** | 0.6363 |
 
-Fusion 是器械特征融合的独立对照配置，与仓库默认的器械辅助监督配置区分报告。不同解码方式下的最优模型有所变化，因此这些单种子结果主要用于分析时序上下文与解码的作用。
+Fusion is a separate instrument-feature fusion variant; the default model uses auxiliary instrument supervision. These single-seed comparisons analyze temporal context and decoding, with the best model varying by decoder.
 
 </details>
 
 <details>
-<summary><strong>PituPhase65：跨数据集有监督适配</strong></summary>
+<summary><strong>PituPhase65: supervised cross-dataset adaptation</strong></summary>
 
-在 64 个可用病例上采用七阶段标签与自定义患者级 `41 / 10 / 13` 训练、验证、测试划分。适配模型使用冻结 LemonFM 特征、四阶段 13 层 MS-TCN、EMA 0.99 和标签平滑 0.05。
+Seven-phase recognition on 64 usable cases, with a custom patient-level **41 / 10 / 13** train / development / test split. The adapted model uses frozen LemonFM features, a four-stage, 13-layer MS-TCN, EMA 0.99, and label smoothing 0.05.
 
-| 评估范围 | 病例平均准确率 ↑ | 全局准确率 ↑ | 全局 Macro-F1 ↑ |
-|---|---:|---:|---:|
-| 开发集：10 例 | 72.68% | 69.81% | 67.79% |
-| **锁定测试集：13 例** | **60.09%** | **61.61%** | **55.55%** |
-| 开发集患者级五折 OOF：51 例 | 60.94% | 61.99% | 57.86% |
+| Evaluation | Mean patient accuracy ↑ | Global accuracy ↑ | Global Macro-F1 ↑ |
+|:---|---:|---:|---:|
+| Development · 10 cases | 72.68% | 69.81% | 67.79% |
+| **Locked test · 13 cases** | **60.09%** | **61.61%** | **55.55%** |
+| Five-fold OOF · 51 development cases | 60.94% | 61.99% | 57.86% |
 
-全部采用严格边界评分、原始模型输出。测试与 OOF 结果接近，开发集成绩较高，反映了患者划分对性能的影响。该实验属于有监督适配，使用独立的七阶段配置；本仓库提供下方的 PitVis 主训练与评估流程。
+All scores use strict boundary evaluation and raw predictions. This experiment uses supervised adaptation and a separate seven-phase configuration. The runnable pipeline in this repository targets PitVis.
 
 </details>
 
-### 计算开销
+<details>
+<summary><strong>Offline inference efficiency</strong></summary>
 
-测量环境为 **NVIDIA A800 80GB、BF16、224 × 224 输入**；视觉提取 batch size 为 64，评估集共 30,896 个采样帧。
+NVIDIA A800 80GB · BF16 · 224 × 224 input · visual batch size 64 · 30,896 sampled frames.
 
-| 项目 | 结果 |
-|---|---:|
-| 视觉主干参数量 | 196.230 M |
-| 时序模型参数量 | 3.073 M |
-| 视觉提取耗时 | 197.731 s |
-| 时序推理 + 固定先验解码耗时 | 1.222 s |
-| 两阶段合计吞吐量 | **155.29 sampled frames/s** |
-| 两阶段顺序执行峰值显存 | 1.641 GB |
+| Measurement | Value |
+|:---|---:|
+| Visual / temporal parameters | 196.230 M / 3.073 M |
+| Visual feature extraction | 197.731 s |
+| Temporal inference + fixed-prior decoding | 1.222 s |
+| Combined throughput | **155.29 sampled frames/s** |
+| Peak GPU memory for sequential stages | 1.641 GB |
 
-吞吐量由两阶段耗时合计得到，包含图像读取和预处理，不含原始视频解码、特征文件读写、先验搜索和训练。视觉测量使用同构主干 checkpoint 在 224 输入下运行；上述数值描述离线处理效率。
+Throughput uses the sum of the two stage timings. It includes image loading and preprocessing, and excludes raw-video decoding, feature-file I/O, prior search, and training. The visual benchmark uses a checkpoint with the same backbone architecture at 224-pixel input. This measures offline processing efficiency.
 
-## 安装
+</details>
 
-Python 3.9+；默认训练配置使用 CUDA 和 BF16。实验环境为 PyTorch 2.4.1、Torchvision 0.19.1、CUDA 12.1。
+## Quick Start
+
+### 1. Install
+
+Python 3.9+ and a CUDA GPU are expected for the default training configuration. Experiments used PyTorch 2.4.1, Torchvision 0.19.1, and CUDA 12.1.
 
 ```bash
+git clone https://github.com/ddqmiao/WF-PitSeg.git
+cd WF-PitSeg
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
-## 数据准备
+### 2. Prepare data and weights
 
-将 [LemonFM 预训练权重](https://huggingface.co/visurg/LemonFM)保存为 `weights/LemonFM.pth`，按以下结构准备帧图像和对应标注：
+Download the [LemonFM pretrained weights](https://huggingface.co/visurg/LemonFM) to `weights/LemonFM.pth`. Sample video frames at 1 FPS, resize to 224 × 224, and organize the dataset as follows:
 
 ```text
 data/PitVis/
@@ -148,11 +170,11 @@ data/PitVis/
     └── ...
 ```
 
-标注列包括 `int_time`、`int_step`、`int_instrument1` 和 `int_instrument2`。有效步骤 ID 为 `1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 12, 14`；步骤与器械名称见 [标签映射](data/label_maps/)。数据集与模型权重需单独准备。
+Annotation columns: `int_time`, `int_step`, `int_instrument1`, and `int_instrument2`. Valid step IDs are `1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 12, 14`; names are provided in the [label maps](data/label_maps/). Datasets and model weights are obtained separately.
 
-## 运行
+### 3. Train and evaluate
 
-在仓库根目录执行：
+Run from the repository root:
 
 ```bash
 export IMAGES_ROOT=data/PitVis/frames_224
@@ -161,37 +183,36 @@ export LEMONFM_WEIGHTS=weights/LemonFM.pth
 export GPU_IDS=0
 export GPU_ID=0
 
-# 1. 微调视觉主干
+# Adapt the visual backbone
 bash scripts/train_backbone.sh
 
-# 2. 提取逐帧特征
+# Extract frame features
 export BACKBONE_CHECKPOINT=outputs/vision/backbone_finetune/best_step_metric.pt
 export FEATURES_ROOT=outputs/features_finetuned
 bash scripts/extract_features.sh
 
-# 3. 训练时序模型
+# Train the temporal model
 bash scripts/train_main.sh
 
-# 4. 评估
+# Evaluate with fixed decoding priors
 export CHECKPOINT=outputs/main/seed_42/best_step_metric.pt
 bash scripts/evaluate_main.sh
 ```
 
-默认训练配置为 [`configs/main/wfpitseg.json`](configs/main/wfpitseg.json)。评估使用固定先验，输出位于 `outputs/evaluation/`，包含指标 JSON、指标 CSV 和逐帧预测 CSV；重新训练的结果随 checkpoint 而变化。
+The default configuration is [`configs/main/wfpitseg.json`](configs/main/wfpitseg.json). Evaluation writes metrics in JSON / CSV and frame predictions in CSV to `outputs/evaluation/`. Results depend on the trained checkpoint.
 
-## 主要代码
+## Code
 
-| 文件 | 功能 |
-|---|---|
-| [pitvis_mainline_model.py](pitvis_mainline_model.py) | 视觉主干与时序模型 |
-| [pitvis_mainline_data.py](pitvis_mainline_data.py) | 数据加载与监督目标生成 |
-| [pitvis_mainline_train.py](pitvis_mainline_train.py) | 损失函数与训练循环 |
-| [train_pitvis_mainline.py](train_pitvis_mainline.py) | 训练入口 |
-| [extract_lemonfm_features.py](extract_lemonfm_features.py) | 特征提取 |
-| [ensemble_eval.py](ensemble_eval.py) | checkpoint 评估入口 |
-| [pitvis_mainline_eval.py](pitvis_mainline_eval.py) | 解码与指标计算 |
-| [pitvis_transition_policy.py](pitvis_transition_policy.py) | 工作流转移约束 |
-| [configs/](configs/) | 视觉微调与时序训练配置 |
-| [scripts/](scripts/) | 主干微调、特征提取、时序训练与评估脚本 |
+| Component | Entry points |
+|:---|:---|
+| Visual and temporal models | [pitvis_mainline_model.py](pitvis_mainline_model.py) |
+| Data loading and supervision targets | [pitvis_mainline_data.py](pitvis_mainline_data.py) |
+| Training and losses | [train_pitvis_mainline.py](train_pitvis_mainline.py) · [pitvis_mainline_train.py](pitvis_mainline_train.py) |
+| Feature extraction | [extract_lemonfm_features.py](extract_lemonfm_features.py) |
+| Evaluation and decoding | [ensemble_eval.py](ensemble_eval.py) · [pitvis_mainline_eval.py](pitvis_mainline_eval.py) |
+| Workflow transition constraints | [pitvis_transition_policy.py](pitvis_transition_policy.py) |
+| Configurations and launch scripts | [configs/](configs/) · [scripts/](scripts/) |
 
-视觉预训练模型来自 [LEMON / LemonFM](https://github.com/visurg-ai/LEMON)。
+## Acknowledgments
+
+Visual pretraining builds on [LEMON / LemonFM](https://github.com/visurg-ai/LEMON). The three figures above are taken from the WF-PitSeg manuscript.
